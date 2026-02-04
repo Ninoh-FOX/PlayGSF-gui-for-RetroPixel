@@ -51,6 +51,7 @@ bool bass_enabled_local = false;
 pid_t playgsf_pid = -1;
 bool paused = false;
 bool screen_off = false;
+bool locked = false;
 
 SDL_Window* window = nullptr;
 SDL_Renderer* renderer = nullptr;
@@ -366,7 +367,7 @@ void draw_list() {
     }
     int hy = SCREEN_HEIGHT - 60;
     render_text("A: Play/Enter  B: Back  L1/R1: Jump", 10, hy + lh*0, white);
-    render_text("SL: Exit  Menu: Lock", 10, hy + lh*1, white);
+    render_text("SL: Exit", 10, hy + lh*1, white);
 
     SDL_RenderPresent(renderer);
 }
@@ -497,9 +498,11 @@ void draw_playback(const TrackMetadata& meta, int elapsed) {
     // Mostrar [PAUSED] o [PLAYING] justo a la derecha de [BASS]
     std::string paused_text = "[PAUSED]";
     std::string playing_text = "[PLAYING]";
+	std::string locked_text = "[LOCKED]";
     
     SDL_Color paused_color = paused ? SDL_Color{255, 165, 0, 255} : SDL_Color{120, 100, 0, 255};
     SDL_Color playing_color = !paused ? SDL_Color{255, 165, 0, 255} : SDL_Color{120, 100, 0, 255};
+	SDL_Color locked_color = locked ? SDL_Color{255, 0, 0, 255} : SDL_Color{120, 100, 0, 255};
     
     int paused_x = base_x + bass_w + 30;
     render_text(paused_text, paused_x, y_pos, paused_color);
@@ -509,6 +512,9 @@ void draw_playback(const TrackMetadata& meta, int elapsed) {
     
     int playing_x = paused_x + paused_w + 30;
     render_text(playing_text, playing_x, y_pos, playing_color);
+	
+	int locked_x = paused_x + paused_w + 180;
+    render_text(locked_text, locked_x, y_pos, locked_color);
     
     // Finalmente, mantener el renderizado de Loop: y su valor con el espacio que corresponda
     std::string looptxt = (loop_mode == LOOP_ALL) ? "ALL" : (loop_mode == LOOP_ONE) ? "ONE" : "OFF";
@@ -706,7 +712,7 @@ int main() {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
             else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) {
+                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER && mode == MODE_PLAYBACK) {
                     if (!screen_off) {
                         screen_off = true;
                     } else {
@@ -716,17 +722,19 @@ int main() {
                     }
                     SDL_Delay(60); continue;
                 }
-				if (e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+				if (e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER && mode == MODE_PLAYBACK) {
                     if (!screen_off) {
                         screen_off = true;
+						locked = true;
                     } else {
                         screen_off = false;
+						locked = false;
                         if (mode == MODE_LIST) draw_list();
                         else draw_playback(current_meta, elapsed_seconds);
                     }
                     SDL_Delay(60); continue;
                 }
-                if (screen_off) continue;
+                if (screen_off && mode == MODE_PLAYBACK) continue;
                 if (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) running = false;
 
                 if (mode == MODE_PLAYBACK) {
