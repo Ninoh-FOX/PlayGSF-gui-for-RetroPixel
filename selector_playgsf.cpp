@@ -154,9 +154,9 @@ bool launch_playgsf(const std::string& filepath) {
     if (pid == 0) {
         
         if (bass_enabled_local)
-            execl("/storage/apps/playgsf/playgsf", "playgsf", "-s", "-q", "-b", filepath.c_str(), nullptr);
+            execl("/usr/local/bin/playgsf/playgsf", "playgsf", "-s", "-q", "-b", filepath.c_str(), nullptr);
         else
-            execl("/storage/apps/playgsf/playgsf", "playgsf", "-s", "-q", filepath.c_str(), nullptr);
+            execl("/usr/local/bin/playgsf/playgsf", "playgsf", "-s", "-q", filepath.c_str(), nullptr);
 
         _exit(127);
     } else if (pid > 0) {
@@ -540,7 +540,7 @@ int main() {
     if (!window) { fprintf(stderr, "SDL_CreateWindow error: %s\n", SDL_GetError()); TTF_Quit(); SDL_Quit(); return 1; }
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
     if (!renderer) { fprintf(stderr, "SDL_CreateRenderer error: %s\n", SDL_GetError()); SDL_DestroyWindow(window); TTF_Quit(); SDL_Quit(); return 1; }
-    font = TTF_OpenFont("/storage/apps/playgsf/DejaVuSans.ttf", FONT_SIZE);
+    font = TTF_OpenFont("/usr/local/bin/playgsf/DejaVuSans.ttf", FONT_SIZE);
     if (!font) { fprintf(stderr, "TTF_OpenFont error\n"); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); TTF_Quit(); SDL_Quit(); return 1; }
     SDL_GameController* controller = nullptr;
     if (SDL_NumJoysticks() > 0) controller = SDL_GameControllerOpen(0);
