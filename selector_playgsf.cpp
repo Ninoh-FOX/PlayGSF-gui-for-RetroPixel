@@ -52,6 +52,7 @@ pid_t playgsf_pid = -1;
 bool paused = false;
 bool screen_off = false;
 bool locked = false;
+Uint32 last_interaction_time = 0;
 
 SDL_Window* window = nullptr;
 SDL_Renderer* renderer = nullptr;
@@ -373,6 +374,35 @@ void draw_list() {
 }
 
 void draw_playback(const TrackMetadata& meta, int elapsed) {
+	if (screen_off) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        
+        int base_x = 10;
+        int y_pos = SCREEN_HEIGHT - 100;
+        
+        int bass_w = 0, bass_h = 0;
+        TTF_SizeText(font, "[BASS]", &bass_w, &bass_h);
+        
+        int paused_w = 0, paused_h = 0;
+        TTF_SizeText(font, "[PAUSED]", &paused_w, &paused_h);
+        
+        int paused_x = base_x + bass_w + 30;
+        int locked_x = paused_x + paused_w + 180;
+
+        SDL_Color blink_color;
+        if ((SDL_GetTicks() / 1000) % 2 == 0) {
+            blink_color = {255, 0, 0, 255};
+        } else {
+            blink_color = {0, 0, 0, 255};
+        }
+        
+        render_text("[LOCKED]", locked_x, y_pos, blink_color);
+        
+        SDL_RenderPresent(renderer);
+        return;
+    }
+	
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
 
@@ -603,6 +633,11 @@ int main() {
 		    if (new_battery >= 0) battery = new_battery;
 		    last_battery_update = now;
 		}
+		
+		if (locked && !screen_off && (now - last_interaction_time > 30000)) {
+            screen_off = true;
+            if (mode == MODE_PLAYBACK) draw_playback(current_meta, elapsed_seconds);
+        }
         
         // ---- CONTROL DEL FIN DE PISTA y CAMBIO CENTRALIZADO ----
         if (playgsf_pid > 0 && !paused) {
@@ -712,21 +747,37 @@ int main() {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
             else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-				if ((e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) && mode == MODE_PLAYBACK) {
-                    if (!screen_off) {
-                        screen_off = true;
-						locked = true;
-                    } else {
-                        screen_off = false;
-						locked = false;
-                        if (mode == MODE_LIST) draw_list();
-                        else draw_playback(current_meta, elapsed_seconds);
+                
+                if (locked) {
+                    last_interaction_time = SDL_GetTicks();
+                    bool was_screen_off = screen_off;
+                    screen_off = false;
+                    
+                    if (e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || 
+                        e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
+                        locked = false;
+                        if (mode == MODE_PLAYBACK) draw_playback(current_meta, elapsed_seconds);
+                    } else if (was_screen_off) {
+                        if (mode == MODE_PLAYBACK) draw_playback(current_meta, elapsed_seconds);
                     }
-                    SDL_Delay(60); continue;
+                    
+                    SDL_Delay(60); 
+                    continue;
                 }
-                if (screen_off && mode == MODE_PLAYBACK) continue;
-                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) running = false;
 
+                if ((e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || 
+                     e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) && mode == MODE_PLAYBACK) {
+                    locked = true;
+                    screen_off = false;
+                    last_interaction_time = SDL_GetTicks();
+                    draw_playback(current_meta, elapsed_seconds);
+                    
+                    SDL_Delay(60); 
+                    continue;
+                }
+                
+                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK) running = false;
+				
                 if (mode == MODE_PLAYBACK) {
                     switch (e.cbutton.button) {
                         case SDL_CONTROLLER_BUTTON_B:
