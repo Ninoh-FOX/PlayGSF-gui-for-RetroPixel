@@ -712,17 +712,7 @@ int main() {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT) running = false;
             else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER && mode == MODE_PLAYBACK) {
-                    if (!screen_off) {
-                        screen_off = true;
-                    } else {
-                        screen_off = false;
-                        if (mode == MODE_LIST) draw_list();
-                        else draw_playback(current_meta, elapsed_seconds);
-                    }
-                    SDL_Delay(60); continue;
-                }
-				if (e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER && mode == MODE_PLAYBACK) {
+				if ((e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) && mode == MODE_PLAYBACK) {
                     if (!screen_off) {
                         screen_off = true;
 						locked = true;
