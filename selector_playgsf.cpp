@@ -1,5 +1,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <alsa/asoundlib.h>
+#include <cmath>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -76,8 +78,65 @@ static void clamp_index(int& idx, int low, int high) {
     if (idx > high) idx = high;
 }
 
+// ----- SCREEN POWER -----
+// Only the backlight is dimmed: the display pipeline keeps running, so audio and
+// the track clock are untouched. On the RetroPixel the backlight table is
+// inverted: bl_power=1 (PWM off) means FULL brightness, and brightness 0 is the
+// maximum too. The darkest the kernel allows is brightness 1.
+#define BL_BRIGHTNESS "/sys/class/backlight/backlight/brightness"
+static int saved_brightness = -1;
+
+static void set_screen_power(bool on) {
+    if (!on) {
+        FILE* f = fopen(BL_BRIGHTNESS, "r");
+        if (f) {
+            if (fscanf(f, "%d", &saved_brightness) != 1) saved_brightness = -1;
+            fclose(f);
+        }
+        f = fopen(BL_BRIGHTNESS, "w");
+        if (f) { fprintf(f, "1"); fclose(f); }
+    } else if (saved_brightness >= 0) {
+        FILE* f = fopen(BL_BRIGHTNESS, "w");
+        if (f) { fprintf(f, "%d", saved_brightness); fclose(f); }
+        saved_brightness = -1;
+    }
+}
+
 // ----- MONITORING BATTERY AND VOLUME -----
 static int battery = 0; // battery percentage from /sys/class/power_supply/battery/capacity
+static int volume = -1;  // percent of the ALSA 'Playback' control, as amixer shows it
+
+// The volume keys (volume_sense.sh) change the hardware 'Playback' control:
+// read that same control, so what is shown is what the keys start from.
+static snd_mixer_t* mixer = nullptr;
+static snd_mixer_elem_t* mixer_elem = nullptr;
+
+static void volume_open() {
+    snd_mixer_selem_id_t* sid;
+    if (snd_mixer_open(&mixer, 0) < 0) { mixer = nullptr; return; }
+    if (snd_mixer_attach(mixer, "hw:0") < 0 || snd_mixer_selem_register(mixer, NULL, NULL) < 0
+            || snd_mixer_load(mixer) < 0) {
+        snd_mixer_close(mixer); mixer = nullptr; return;
+    }
+    snd_mixer_selem_id_alloca(&sid);
+    snd_mixer_selem_id_set_index(sid, 0);
+    snd_mixer_selem_id_set_name(sid, "Playback");
+    mixer_elem = snd_mixer_find_selem(mixer, sid);
+}
+
+static int read_volume_percent() {
+    long min = 0, max = 0, val = 0;
+    if (!mixer || !mixer_elem) return -1;
+    snd_mixer_handle_events(mixer);
+    if (snd_mixer_selem_get_playback_volume_range(mixer_elem, &min, &max) < 0 || max <= min) return -1;
+    if (snd_mixer_selem_get_playback_volume(mixer_elem, SND_MIXER_SCHN_FRONT_LEFT, &val) < 0) return -1;
+    // Same scale as the volume keys (rp-inputd): raw 119..237 is 0..100,
+    // below 119 is mute
+    (void)min; (void)max;
+    if (val < 119) return 0;
+    int pct = (int)lrint((double)(val - 119) * 100.0 / 118.0);
+    return pct > 100 ? 100 : pct;
+}
 static Uint32 last_battery_update = 0;
 static const Uint32 battery_update_interval = 1000; // 1 second in ms
 
@@ -293,22 +352,32 @@ void render_status_monitor(int screen_width) {
     SDL_Color green = {0, 255, 0, 255};
     SDL_Color orange = {255, 165, 0, 255};
 
+    const char* vol_label = "VOL:";
+    char vol_value[16];
+    if (volume >= 0) snprintf(vol_value, sizeof(vol_value), "%d%%  ", volume);
+    else snprintf(vol_value, sizeof(vol_value), "--  ");
+
     const char* bat_label = "BAT:";
     char bat_value[16];
     snprintf(bat_value, sizeof(bat_value), "%d%% ", battery);
 
-    int bat_label_w = 0, bat_value_w = 0;
+    int vol_label_w = 0, vol_value_w = 0, bat_label_w = 0, bat_value_w = 0;
     int h = 0;
 
+    TTF_SizeText(font, vol_label, &vol_label_w, &h);
+    TTF_SizeText(font, vol_value, &vol_value_w, &h);
     TTF_SizeText(font, bat_label, &bat_label_w, &h);
     TTF_SizeText(font, bat_value, &bat_value_w, &h);
 
-    int pad = 0;
-    int total_w = bat_label_w + bat_value_w + pad * 3;
+    int total_w = vol_label_w + vol_value_w + bat_label_w + bat_value_w;
 
     int x = screen_width - 10 - total_w;  // usar parámetro
     int y = 10;
 
+    render_text(vol_label, x, y, green);
+    x += vol_label_w;
+    render_text(vol_value, x, y, orange);
+    x += vol_value_w;
     render_text(bat_label, x, y, green);
     x += bat_label_w;
     render_text(bat_value, x, y, orange);
@@ -377,16 +446,16 @@ void draw_playback(const TrackMetadata& meta, int elapsed) {
 	if (screen_off) {
         SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
         SDL_RenderClear(renderer);
-        
+
         int base_x = 10;
         int y_pos = SCREEN_HEIGHT - 100;
-        
+
         int bass_w = 0, bass_h = 0;
         TTF_SizeText(font, "[BASS]", &bass_w, &bass_h);
-        
+
         int paused_w = 0, paused_h = 0;
         TTF_SizeText(font, "[PAUSED]", &paused_w, &paused_h);
-        
+
         int paused_x = base_x + bass_w + 30;
         int locked_x = paused_x + paused_w + 180;
 
@@ -396,9 +465,9 @@ void draw_playback(const TrackMetadata& meta, int elapsed) {
         } else {
             blink_color = {0, 0, 0, 255};
         }
-        
+
         render_text("[LOCKED]", locked_x, y_pos, blink_color);
-        
+
         SDL_RenderPresent(renderer);
         return;
     }
@@ -576,6 +645,9 @@ int main() {
     if (SDL_NumJoysticks() > 0) controller = SDL_GameControllerOpen(0);
 	SDL_RenderPresent(renderer);
 
+    volume_open();
+    volume = read_volume_percent();
+
     TrackMetadata current_meta;
     int track_seconds = 0;
     using clock_type = std::chrono::steady_clock;
@@ -633,9 +705,23 @@ int main() {
 		    if (new_battery >= 0) battery = new_battery;
 		    last_battery_update = now;
 		}
+
+		// Volume keys are handled by volume_sense.sh: follow the mixer
+		static Uint32 last_volume_update = 0;
+		if (now - last_volume_update >= 150) {
+		    last_volume_update = now;
+		    int new_volume = read_volume_percent();
+		    if (new_volume != volume) {
+		        volume = new_volume;
+		        if (!screen_off) {
+		            if (mode == MODE_PLAYBACK) draw_playback(current_meta, elapsed_seconds);
+		        }
+		    }
+		}
 		
 		if (locked && !screen_off && (now - last_interaction_time > 30000)) {
             screen_off = true;
+            set_screen_power(false);
             if (mode == MODE_PLAYBACK) draw_playback(current_meta, elapsed_seconds);
         }
         
@@ -752,6 +838,7 @@ int main() {
                     last_interaction_time = SDL_GetTicks();
                     bool was_screen_off = screen_off;
                     screen_off = false;
+                    if (was_screen_off) set_screen_power(true);
                     
                     if (e.cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER || 
                         e.cbutton.button == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) {
@@ -876,6 +963,8 @@ int main() {
         }
     }
     
+    if (screen_off) set_screen_power(true);
+    if (mixer) snd_mixer_close(mixer);
     if (controller) SDL_GameControllerClose(controller);
     TTF_CloseFont(font);
     SDL_DestroyRenderer(renderer);
